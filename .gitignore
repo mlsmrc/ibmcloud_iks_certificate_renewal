@@ -1,0 +1,6 @@
+
+*.crt
+*.log
+values.sh
+*.key
+*.swp
