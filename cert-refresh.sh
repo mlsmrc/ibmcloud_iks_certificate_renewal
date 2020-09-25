@@ -48,8 +48,8 @@ ANNOTATION="author=certificate_renewal_agent"
 
 function crnEncode()
 {
-  url=$1
-  echo ${url} | sed "s/:/%3A/g" | sed "s/\//%2F/g"
+  local url=$1
+  python -c "import urllib, sys; print urllib.quote(sys.argv[1])" "$url"
 }
 
 function _echo() { echo $1 >> $LOG_FILE; }
@@ -68,6 +68,28 @@ function isBase64EncodedKubeSecret()
                   jq --arg name $crt_file_name -r '.data[$name]' | \
                   grep -q "END CERTIFICATE\|BEGIN CERTIFICATE" && return 1
   return 0
+}
+function checkArgs()
+{
+  local rc=0
+  local vars="CM_INSTANCE_CRN \
+              CLOUD_ACCOUNT_CRN \
+              CM_REGION HOSTNAME_DOMAINAME \
+              CERT_CRT_PATH \
+              CERT_KEY_PATH \
+              CLOUD_API_KEY \
+              SECRET_NAME \
+              SECRET_NAMESPACE \
+              CLOUD_REGION \
+              CLOUD_RESOURCE_GROUP \
+              CLUSTER_ID \
+              KUBE_DEPLOY_NAME"
+
+  for var in $vars; do
+    [ -z "${!var}" ] && _einfo "Variable $var is missing" && rc=1
+  done
+
+  return $rc
 }
 
 ################################ Logs ###############################
@@ -295,14 +317,17 @@ function deleteOldKubeSecret()
 # Validating log file
 checkLogFile
 
+# Variables validation
+checkArgs || exit 10
+
 # Validate api token
-getIamToken $CLOUD_API_KEY $NO &>/dev/null || exit 10
+getIamToken $CLOUD_API_KEY $NO &>/dev/null || exit 11
 
 # Perform IBM Cloud login
-ibmCloudLogin $CLOUD_API_KEY || exit 11
+ibmCloudLogin $CLOUD_API_KEY || exit 12
 
 # Get kubeconfig from your IBM Cloud Kubernetes cluster
-kubeconfigRefresh $CLOUD_API_KEY || exit 12
+kubeconfigRefresh $CLOUD_API_KEY || exit 13
 
 # Check if namespace exists
 namespaceExists || exit 20
