@@ -22,8 +22,8 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
 
-# Set DEBUG=<random_string> to read values from values.sh script
-[ ! -z $DEBUG ] && source values.sh
+# export DEBUG=<random_string> to read values from values.sh script
+[ ! -z "$DEBUG" ] && source values.sh
 
 CM_FULL_CRN="crn:v1:bluemix:public:cloudcerts:${CM_REGION}:a/$CLOUD_ACCOUNT_CRN:$CM_INSTANCE_CRN::"
 CM_URL="https://"${CM_REGION}".certificate-manager.cloud.ibm.com/"
@@ -38,28 +38,60 @@ NO=1
 
 # Using these folder to store temporarly the certificate
 BACKUP_FOLDER="backup"
-BACKUP_CERT_CRT_PATH=$BACKUP_FOLDER"/"$(basename $CERT_CRT_PATH)
-BACKUP_CERT_KEY_PATH=$BACKUP_FOLDER"/"$(basename $CERT_KEY_PATH)
+[ ! -z "$CERT_CRT_PATH" ] && BACKUP_CERT_CRT_PATH=$BACKUP_FOLDER"/"$(basename $CERT_CRT_PATH)
+[ ! -z "$CERT_KEY_PATH" ] && BACKUP_CERT_KEY_PATH=$BACKUP_FOLDER"/"$(basename $CERT_KEY_PATH)
 
 # Using this annotation for new/backup secret
 ANNOTATION="author=certificate_renewal_agent"
 
 ################################ UTILS ################################
 
+#===  FUNCTION  ================================================================
+#         NAME:  crnEncode
+#  DESCRIPTION:  URL Encoding
+# PARAMETER  1:  url
+#                The url which is going to be encoded
+#       RETURN:  0 for success; 1 otherwise
+#===============================================================================
 function crnEncode()
 {
   local url=$1
-  python -c "import urllib, sys; print urllib.quote(sys.argv[1])" "$url"
+  echo ${url} | sed "s/:/%3A/g" | sed "s/\//%2F/g"
 }
 
-function _echo() { echo $1 >> $LOG_FILE; }
+#===  FUNCTION  ================================================================
+#         NAME:  _echo
+#  DESCRIPTION:  Redirecting output to $LOG_FILE
+# PARAMETER  1:  url
+#                The url which is going to be encoded
+#       RETURN:  0 for success; 1 otherwise
+#===============================================================================
+function _echo()
+{
+  echo $1 >> $LOG_FILE
+}
 
+#===  FUNCTION  ================================================================
+#         NAME:  isBase64EncodedKubeSecret
+#  DESCRIPTION:  Check if a given certificate (named $CRT_FILE_NAME) is Base64
+#                encrypted
+#         NOTE:  Not more used
+#       RETURN:  0 for success; 1 otherwise
+#===============================================================================
 function isBase64EncodedCrt()
 {
   local CRT_FILE_NAME=$1
   echo $CRT_FILE_NAME | grep -q "END CERTIFICATE\|BEGIN CERTIFICATE" && return 1
   return 0
 }
+
+#===  FUNCTION  ================================================================
+#         NAME:  isBase64EncodedKubeSecret
+#  DESCRIPTION:  Check if a given secret (named $SECRET_NAME) is Base64
+#                encrypted
+#         NOTE:  Not more used
+#       RETURN:  0 for success; 1 otherwise
+#===============================================================================
 function isBase64EncodedKubeSecret()
 {
   local SECRET_NAME=$1
@@ -69,6 +101,13 @@ function isBase64EncodedKubeSecret()
                   grep -q "END CERTIFICATE\|BEGIN CERTIFICATE" && return 1
   return 0
 }
+
+#===  FUNCTION  ================================================================
+#         NAME:  checkArgs
+#  DESCRIPTION:  Check it all mandatory parameters are not empty
+# PARAMETER  1:  ---
+#       RETURN:  0 for success; 1 otherwise
+#===============================================================================
 function checkArgs()
 {
   local rc=0
@@ -86,21 +125,42 @@ function checkArgs()
               KUBE_DEPLOY_NAME"
 
   for var in $vars; do
-    [ -z "${!var}" ] && _einfo "Variable $var is missing" && rc=1
+    [ -z "${!var}" ] && _echo "Variable $var is missing" && rc=1
   done
 
   return $rc
 }
 
 ################################ Logs ###############################
+
+#===  FUNCTION  ================================================================
+#         NAME:  checkLogFile
+#  DESCRIPTION:  Check the log file provided as $LOG_FILE. If "/dev/stdout" is
+#                selected, it's going to use "/dev/stderr"
+# PARAMETER  1:  ---
+#       RETURN:  ---
+#===============================================================================
 function checkLogFile()
 {
+  [ -z "$LOG_FILE" ] && { LOG_FILE="/dev/stderr"; _echo "LOG_FILE variable not set"; }
   [[ "$LOG_FILE" == "/dev/stdout" ]] && { LOG_FILE="/dev/stderr"; _echo "/dev/stdout is not allowed for logs"; }
   _echo "Using $LOG_FILE for logs"
   _echo ""
 }
 
 ################################ IAM ################################
+
+#===  FUNCTION  ================================================================
+#         NAME:  getIamToken
+#  DESCRIPTION:  Giving the IBM Cloud APIKey it produces the IAM token
+# PARAMETER  1:  API_KEY
+#                it's the IBM Cloud APIkey which has the IBM Cloud Certificate
+#                Manager visibility
+# PARAMETER  2:  SILENT
+#                It's an 0/1 value which allow the printing out of the auth
+#                result
+#       RETURN:  0 for the success and the IAM token as string; 1 otherwise
+#===============================================================================
 function getIamToken()
 {
   [ $# -ne 2 ] && _echo "usage getIamToken <api_token> <silent>" && return 1
@@ -121,6 +181,15 @@ function getIamToken()
 }
 
 ############################# IBMCloud #############################
+
+#===  FUNCTION  ================================================================
+#         NAME:  ibmCloudLogin
+#  DESCRIPTION:  It performs the IBMCloud login using the $CLOUD_REGION region,
+#                the resource group $CLOUD_RESOURCE_GROUP and the IAM API Key
+#                $CLOUD_API_KEY
+# PARAMETER  1:  ---
+#       RETURN:  0 for the success; 1 otherwise
+#===============================================================================
 function ibmCloudLogin()
 {
   _echo "IBMCloud login"
@@ -130,23 +199,60 @@ function ibmCloudLogin()
   return $?
 }
 
+#===  FUNCTION  ================================================================
+#         NAME:  kubeconfigRefresh
+#  DESCRIPTION:  It gets the kubeconfig file of the cluster (specified by
+#                $CLUSTER_ID) leveraging the 'ibmcloud ks' command.
+# PARAMETER  1:  ---
+#       RETURN:  0 for the success; 1 otherwise
+#===============================================================================
 function kubeconfigRefresh()
 {
   _echo "Refreshing Cluster '$CLUSTER_ID' token"
   ibmcloud ks cluster config --cluster $CLUSTER_ID
   return $?
 }
+
+
 ################################ CM ################################
+
+#===  FUNCTION  ================================================================
+#         NAME:  getJsonCertFromCertManager
+#  DESCRIPTION:  it gets the certificate (referred by $CERT_CRN) in a json
+#                format from IBM Cloud Certificate Manager instance leveraging
+#                the IBMCloud Apikey ($API_KEY) for the authentication
+# PARAMETER  1:  API_KEY
+#                it's the IBM Cloud APIkey which has the IBM Cloud Certificate
+#                Manager visibility
+# PARAMETER  2:  CERT_CRN
+#                The full CRN (Cloud Resource name) of the certificate stored
+#                into the IBM Cloud Certificate Manager
+#       RETURN:  json which represents all the certificate fields
+#===============================================================================
 function getJsonCertFromCertManager()
 {
   [ $# -ne 2 ] && _echo "usage getJsonCertFromCertManager <api_token> <cert_crn>" && return 1
-  API_KEY=$1
-  CERT_CRN=$2
+  local API_KEY=$1
+  local CERT_CRN=$2
 
   token=$(getIamToken ${API_KEY} $YES)
   encodedCrn=$(crnEncode ${CERT_CRN})
   curl --silent -H "Authorization: Bearer $token"  ${API_V2_ENDPOINT}"certificate/"${encodedCrn}
 }
+
+#===  FUNCTION  ================================================================
+#         NAME:  getJsonCertsFromCertManager
+#  DESCRIPTION:  it gets all the certificate in a json format from IBM Cloud
+#                Certificate Manager (referred by $CM_FULL_CRN) leveraging the
+#                IBMCloud Apikey ($API_KEY) for the authentication
+# PARAMETER  1:  API_KEY
+#                it's the IBM Cloud APIkey which has the IBM Cloud Certificate
+#                Manager visibility
+# PARAMETER  2:  CM_FULL_CRN
+#                The full CRN (Cloud Resource name) of the IBM Cloud Certificate
+#                manager where the certificate you're looking for is stored
+#       RETURN:  json which represents all the visible certificates
+#===============================================================================
 function getJsonCertsFromCertManager()
 {
   [ $# -ne 2 ] && _echo "usage getJsonCertsFromCertManager <api_token> <cert_folder_crn>" && return 1
@@ -158,12 +264,32 @@ function getJsonCertsFromCertManager()
   curl --silent -H "Authorization: Bearer $token" ${API_V3_ENDPOINT}${encodedCrn}"/certificates/"
 }
 
+#===  FUNCTION  ================================================================
+#         NAME:  getCrnCertFromCertManager
+#  DESCRIPTION:  it gets the certificate CRN (Cloud Resource Name) of the
+#                certificate (specified by the domain $DOMAIN - actually it's
+#                hostname.domainname),from IBM Cloud Certificate Manager
+#                (referred by $CM_FULL_CRN) leveraging the IBMCloud Apikey
+#                ($API_KEY) for the authentication
+#                IBMCloud Apikey ($API_KEY).
+# PARAMETER  1:  API_KEY
+#                it's the IBM Cloud APIkey which has the IBM Cloud Certificate
+#                Manager visibility
+# PARAMETER  2:  CM_FULL_CRN
+#                The full CRN (Cloud Resource name) of the IBM Cloud Certificate
+#                manager where the certificate you're looking for is stored
+# PARAMETER  3:  DOMAIN
+#                The domain (actually it's hostname.domainname) of releated to
+#                the certificate key you're looking for
+#       RETURN:  0 the certificate CRN (Cloud Resource name) is found; 1
+#                otherwise
+#===============================================================================
 function getCrnCertFromCertManager()
 {
   [ $# -ne 3 ] && _echo "usage getCrnCertFromCertManager <api_token> <cm_crn> <domain>" && return 1
-  API_KEY=$1
-  CM_FULL_CRN=$2
-  DOMAIN=$3
+  local API_KEY=$1
+  local CM_FULL_CRN=$2
+  local DOMAIN=$3
 
   _echo "Getting Certificate CRN of $DOMAIN"
   jsonCerts=$(getJsonCertsFromCertManager $API_KEY $CM_FULL_CRN)
@@ -172,7 +298,7 @@ function getCrnCertFromCertManager()
   local jsonCert=$(echo $jsonCerts | jq .certificates | jq --arg d $DOMAIN '[ .[] | select(.domains[] | contains ($d))]')
 
   if [ $(echo $jsonCert | jq length) -eq 1 ]; then
-    local id=$(cat jsonCert | jq -r .[0]._id)
+    local id=$(echo $jsonCert | jq -r .[0]._id)
     _echo "CRN Found: $id"
     echo $id
     return 0
@@ -182,17 +308,40 @@ function getCrnCertFromCertManager()
   return 1
 }
 
+#===  FUNCTION  ================================================================
+#         NAME:  getValueFileFromCert
+#  DESCRIPTION:  Storing certificate (referring to $DOMAIN) field (specified by
+#                $VALUE) from IBM Cloud Certificate Manager (referred by
+#                $CM_FULL_CRN) into a file (named $FILE_NAME) leveraging the
+#                IBMCloud Apikey ($API_KEY)
+# PARAMETER  1:  API_KEY
+#                it's the IBM Cloud APIkey which has the IBM Cloud Certificate
+#                Manager visibility
+# PARAMETER  2:  CM_FULL_CRN
+#                The full CRN (Cloud Resource name) of the IBM Cloud Certificate
+#                manager where the certificate you're looking for is stored
+# PARAMETER  3:  DOMAIN
+#                The domain (actually it's hostname.domainname) of releated to
+#                the certificate key you're looking for
+# PARAMETER  4:  VALUE
+#                This is the certificate value (json format) which it's going to
+#                to be stored into the local file system
+# PARAMETER  5:  FILE_NAME
+#                File name referring to file system position where the
+#                certificate is going to be store
+#       RETURN:  0 if the field is correctly stored as file; 1 otherwise
+#===============================================================================
 function getValueFileFromCert()
 {
   [ $# -ne 5 ] && _echo "usage getCertFileFromCert <api_token> <cm_crn> <domain> <value> <file_name>" && return 1
-  API_KEY=$1
-  CM_FULL_CRN=$2
-  DOMAIN=$3
-  VALUE=$4
-  FILE_NAME=$5
+  local API_KEY=$1
+  local CM_FULL_CRN=$2
+  local DOMAIN=$3
+  local VALUE=$4
+  local FILE_NAME=$5
 
   # Get Certificate CRN
-  CERT_CRN=$(getCrnCertFromCertManager $API_KEY $CM_FULL_CRN $DOMAIN)
+  local CERT_CRN=$(getCrnCertFromCertManager $API_KEY $CM_FULL_CRN $DOMAIN)
   [ -z "$CERT_CRN" ] && return 1
 
   # Create directory
@@ -209,24 +358,81 @@ function getValueFileFromCert()
 
   # Check file correctness
   [ -z "$(cat $FILE_NAME)" ] && _echo "Certificate Key empty" && return 1
-  [[ "$(cat $FILE_NAME)" == "null" ]] && _echo "Certificate Key not exists" && return 1
+  [[ "$(cat $FILE_NAME)" == "null" ]] && _echo "Certificate Key not exists" && rm -rf $FILE_NAME && return 1
 
   _echo "Done"
 }
 
+
+#===  FUNCTION  ================================================================
+#         NAME:  getCrtFileFromCert
+#  DESCRIPTION:  Storing certificate (referring to $DOMAIN) from IBM Cloud
+#                Certificate Manager (referred by $CM_FULL_CRN) into a file
+#                (named $FILE_NAME) leveraging the IBMCloud Apikey ($API_KEY)
+# PARAMETER  1:  API_KEY
+#                it's the IBM Cloud APIkey which has the IBM Cloud Certificate
+#                Manager visibility
+# PARAMETER  2:  CM_FULL_CRN
+#                The full CRN (Cloud Resource name) of the IBM Cloud Certificate
+#                manager where the certificate you're looking for is stored
+# PARAMETER  3:  DOMAIN
+#                The domain (actually it's hostname.domainname) of releated to
+#                the certificate key you're looking for
+# PARAMETER  4:  FILE_NAME
+#                File name referring to file system position where the
+#                certificate is going to be store
+#       RETURN:  0 if the certificate ".data.content" field is stored as file
+#                (named $FILE_NAME) correctly; 1 otherwise
+#===============================================================================
 function getCrtFileFromCert()
 {
-  getValueFileFromCert $1 $2 $3 ".data.content" $4
+  local API_KEY=$1
+  local CM_FULL_CRN=$2
+  local DOMAIN=$3
+  local FILE_NAME=$4
+  getValueFileFromCert $API_KEY $CM_FULL_CRN $DOMAIN ".data.content" $FILE_NAME
   return $?
 }
 
+#===  FUNCTION  ================================================================
+#         NAME:  getKeyFileFromCert
+#  DESCRIPTION:  Storing certificate key (referring to $DOMAIN) from IBM Cloud
+#                Certificate Manager (referred by $CM_FULL_CRN) into a file
+#                (named $FILE_NAME) leveraging the IBMCloud Apikey ($API_KEY)
+# PARAMETER  1:  API_KEY
+#                it's the IBM Cloud APIkey which has the IBM Cloud Certificate
+#                Manager visibility
+# PARAMETER  2:  CM_FULL_CRN
+#                The full CRN (Cloud Resource name) of the IBM Cloud Certificate
+#                manager where the certificate key you're looking for is stored
+# PARAMETER  3:  DOMAIN
+#                The domain (actually it's hostname.domainname) of releated to
+#                the certificate key you're looking for
+# PARAMETER  4:  FILE_NAME
+#                File name referring to file system position where the
+#                certificate key is going to be store
+#       RETURN:  0 if the certificate ".data.content" field is stored as file
+#                (named $FILE_NAME) correctly; 1 otherwise
+#===============================================================================
 function getKeyFileFromCert()
 {
-  getValueFileFromCert $1 $2 $3 ".data.priv_key" $4
+  local API_KEY=$1
+  local CM_FULL_CRN=$2
+  local DOMAIN=$3
+  local FILE_NAME=$4
+  getValueFileFromCert $API_KEY $CM_FULL_CRN $DOMAIN ".data.priv_key" $FILE_NAME
   return $?
 }
 
 ################################ K8s ################################
+
+#===  FUNCTION  ================================================================
+#         NAME:  secretExists
+#  DESCRIPTION:  Check if the Kubernetes secret $SECRET_NAME exists in
+#                Kubernetes namespace $SECRET_NAMESPACE
+# PARAMETER  1:  ---
+#       RETURN: 0 if secret exists; 1 otherwise
+#===============================================================================
 function secretExists()
 {
   _echo "Check if secret '$SECRET_NAME' exists"
@@ -238,6 +444,13 @@ function secretExists()
 
   return $rc
 }
+
+#===  FUNCTION  ================================================================
+#         NAME:  namespaceExists
+#  DESCRIPTION:  Check if the Kubernetes namespace $SECRET_NAMESPACE exists
+# PARAMETER  1:  ---
+#       RETURN: 0 if namespace exists; 1 otherwise
+#===============================================================================
 function namespaceExists()
 {
   _echo "Check if provided namespace exists $SECRET_NAMESPACE"
@@ -250,6 +463,13 @@ function namespaceExists()
   return $rc
 }
 
+#===  FUNCTION  ================================================================
+#         NAME:  createKubeSecret
+#  DESCRIPTION:  Create a new Kubernetes secret - named $SECRET_NAME on namespace
+#                $SECRET_NAMESPACE based on crt/key ($CERT_CRT_PATH /
+#                $CERT_KEY_PATH file stored on file system
+# PARAMETER  1:  ---
+#===============================================================================
 function createKubeSecret()
 {
   _echo "Creating Kubernetes secret '$SECRET_NAME' on namespace '$SECRET_NAMESPACE' based on $CERT_CRT_PATH/$CERT_KEY_PATH"
@@ -260,6 +480,12 @@ function createKubeSecret()
   annotateKubeSecret $SECRET_NAME
 }
 
+#===  FUNCTION  ================================================================
+#         NAME:  annotateKubeSecret
+#  DESCRIPTION:  Annotate the generated Kubernetes secret
+# PARAMETER  1:  secret_name
+#                the secret which must to be annotated
+#===============================================================================
 function annotateKubeSecret()
 {
   local secret_name=$1
@@ -272,6 +498,15 @@ function removeBackupKubeSecretFolder()
   rm -rf ${BACKUP_FOLDER}
 }
 
+#===  FUNCTION  ================================================================
+#         NAME:  backupKubeSecret
+#  DESCRIPTION:  Delete the old backup if exists. Backupping the current
+#                Kubernetes secret - specified by ${SECRET_NAME} - creating a
+#                new one named ${SECRET_NAME}-backup.
+#                Annotate the secret with annotateKubeSecret function, using the
+#                label $secret_name_backup
+# PARAMETER  1:  ---
+#===============================================================================
 function backupKubeSecret()
 {
   local crt_file_name=$(basename $BACKUP_CERT_CRT_PATH)
@@ -296,6 +531,14 @@ function backupKubeSecret()
 
   return 0
 }
+
+#===  FUNCTION  ================================================================
+#         NAME:  restartDeployment
+#  DESCRIPTION:  Forcing the kubernetes deployment - specified by
+#                $KUBE_DEPLOY_NAME - restart. Then it waits about the deployment
+#                rollout status
+# PARAMETER  1:  ---
+#===============================================================================
 function restartDeployment()
 {
   _echo "Restarting deployment $KUBE_DEPLOY_NAME"
@@ -304,6 +547,12 @@ function restartDeployment()
   _echo "Getting deployment $KUBE_DEPLOY_NAME rollout status"
   kubectl rollout status deployment $KUBE_DEPLOY_NAME -n $SECRET_NAMESPACE
 }
+
+#===  FUNCTION  ================================================================
+#         NAME:  deleteOldKubeSecret
+#  DESCRIPTION:  Delete the old Kubernetes secret named $SECRET_NAME
+# PARAMETER  1:  ---
+#===============================================================================
 function deleteOldKubeSecret()
 {
   _echo "Deleting old secret"
