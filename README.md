@@ -18,4 +18,10 @@ A potentially painful operation could be certificate regeneration which involves
 
 ## Resolution
 
-We are going to provide a **[operator](https://kubernetes.io/docs/concepts/extend-kubernetes/operator/) CronJob** which manages the TLS certificate renewal.
+We are going to provide a container which manages the TLS certificate renewal, performing those actions:
+
+- IBM Cloud login
+- old secret backup
+- download TLS certificate from IBM Cloud Certificate Manager
+- create a new secret based on downloaded certificate
+- Kubernetes deployment restart
