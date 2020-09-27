@@ -1,0 +1,16 @@
+dist: bionic
+
+env:
+  global:
+    - VERSION=0.1
+    - USER_NAME=mlsmrc
+    - IMAGE_NAME=ibmcloud_iks_cert_renewal
+
+script:
+- docker build -t $USER_NAME/$IMAGE_NAME:$VERSION .
+- docker build -t $USER_NAME/$IMAGE_NAME:latest .
+
+after_success:
+- echo $DOCKER_PWD | docker login -u $USER_NAME --password-stdin
+- docker push $USER_NAME/$IMAGE_NAME:$VERSION
+- docker push $USER_NAME/$IMAGE_NAME:latest

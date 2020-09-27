@@ -1,7 +1,11 @@
 # IBMCloud IKS TLS Certificate Auto-Renewal
 
 [![IKS badge](https://img.shields.io/badge/IBM%20Cloud-Kubernetes%20Service-blue)](https://cloud.ibm.com)
-[![Version](https://img.shields.io/badge/version-0.1-yellow)](Changelog.md)
+[![Base image mlsmrc/ibmcloudcli](https://img.shields.io/badge/Base%20image-mlsmrc/ibmcloudcli-brightgreen)](https://hub.docker.com/mlsmrc/ibmcloudcli)
+![Container size](https://img.shields.io/docker/image-size/mlsmrc/ibmcloud_iks_cert_renewal/latest)
+[![Version](https://img.shields.io/docker/v/mlsmrc/ibmcloud_iks_cert_renewal/latest)](Changelog.md)
+
+[![Build Status](https://travis-ci.org/mlsmrc/ibmcloud_iks_cert_renewal.svg?branch=master)](https://travis-ci.org/mlsmrc/ibmcloud_iks_cert_renewal)
 
 ## Problem
 
